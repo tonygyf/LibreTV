@@ -930,6 +930,7 @@ function showImportBox(fun) {
                             <div class="flex w-28 h-9 px-2 flex-col bg-pink-600 rounded-full shadow text-white text-xs font-semibold leading-4 items-center justify-center cursor-pointer focus:outline-none">选择文件</div>
                         </label>
                         <button onclick="importConfigFromUrl()" class="flex w-28 h-9 px-2 flex-col bg-blue-600 rounded-full shadow text-white text-xs font-semibold leading-4 items-center justify-center cursor-pointer focus:outline-none">从URL导入</button>
+                        <button onclick="importTvboxFromUrl()" class="flex w-28 h-9 px-2 flex-col bg-emerald-600 rounded-full shadow text-white text-xs font-semibold leading-4 items-center justify-center cursor-pointer focus:outline-none">TVBox导入</button>
                     </div>
                     </div>
                 </div>

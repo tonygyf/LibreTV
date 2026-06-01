@@ -1,5 +1,6 @@
 // 全局变量
-let selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '["tyyszy","dyttzy", "bfzy", "ruyi"]'); // 默认选中资源
+const DEFAULT_SELECTED_APIS = ['qiqi', 'bfzy', 'dbzy', 'jisu'];
+let selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || JSON.stringify(DEFAULT_SELECTED_APIS)); // 默认选中资源
 let customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]'); // 存储自定义API列表
 
 // 添加当前播放的集数索引
@@ -13,6 +14,8 @@ let episodesReversed = false;
 
 // 页面初始化
 document.addEventListener('DOMContentLoaded', function () {
+    normalizeSelectedAPIs();
+
     // 初始化API复选框
     initAPICheckboxes();
 
@@ -28,7 +31,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // 设置默认API选择（如果是第一次加载）
     if (!localStorage.getItem('hasInitializedDefaults')) {
         // 默认选中资源
-        selectedAPIs = ["tyyszy", "bfzy", "dyttzy", "ruyi"];
+        selectedAPIs = [...DEFAULT_SELECTED_APIS];
         localStorage.setItem('selectedAPIs', JSON.stringify(selectedAPIs));
 
         // 默认选中过滤开关
@@ -60,6 +63,19 @@ document.addEventListener('DOMContentLoaded', function () {
     // 初始检查成人API选中状态
     setTimeout(checkAdultAPIsSelected, 100);
 });
+
+function normalizeSelectedAPIs() {
+    const validBuiltInApiIds = Object.keys(API_SITES);
+    const validCustomApiIds = customAPIs.map((_, index) => `custom_${index}`);
+    const validApiIds = new Set([...validBuiltInApiIds, ...validCustomApiIds]);
+
+    selectedAPIs = selectedAPIs.filter(apiId => validApiIds.has(apiId));
+    if (selectedAPIs.length === 0) {
+        selectedAPIs = DEFAULT_SELECTED_APIS.filter(apiId => validApiIds.has(apiId));
+    }
+
+    localStorage.setItem('selectedAPIs', JSON.stringify(selectedAPIs));
+}
 
 // 初始化API复选框
 function initAPICheckboxes() {
@@ -222,6 +238,13 @@ function renderCustomAPIsList() {
         apiItem.className = 'flex items-center justify-between p-1 mb-1 bg-[#222] rounded';
         const textColorClass = api.isAdult ? 'text-pink-400' : 'text-white';
         const adultTag = api.isAdult ? '<span class="text-xs text-pink-400 mr-1">(18+)</span>' : '';
+        const categoryLabel = getCustomApiCategoryLabel(api.category);
+        const categoryTag = categoryLabel
+            ? `<span class="text-[10px] px-1 py-0.5 rounded bg-blue-900/60 text-blue-200 mr-1">${categoryLabel}</span>`
+            : '';
+        const sourceTypeTag = api.origin === 'tvbox'
+            ? '<span class="text-[10px] px-1 py-0.5 rounded bg-emerald-900/60 text-emerald-200">TVBox</span>'
+            : '';
         // 新增 detail 地址显示
         const detailLine = api.detail ? `<div class="text-xs text-gray-400 truncate">detail: ${api.detail}</div>` : '';
         apiItem.innerHTML = `
@@ -233,6 +256,10 @@ function renderCustomAPIsList() {
                 <div class="flex-1 min-w-0">
                     <div class="text-xs font-medium ${textColorClass} truncate">
                         ${adultTag}${api.name}
+                    </div>
+                    <div class="flex items-center flex-wrap gap-1 mt-1">
+                        ${categoryTag}
+                        ${sourceTypeTag}
                     </div>
                     <div class="text-xs text-gray-500 truncate">${api.url}</div>
                     ${detailLine}
@@ -1141,69 +1168,157 @@ function toggleEpisodeOrder(sourceCode, vodId) {
     }
 }
 
-// 从URL导入配置
-async function importConfigFromUrl() {
-    // 创建模态框元素
-    let modal = document.getElementById('importUrlModal');
+function getCustomApiCategoryLabel(category) {
+    switch (category) {
+        case 'yellow':
+            return '黄色';
+        case 'anime':
+            return '动漫';
+        case 'general':
+            return '通用';
+        default:
+            return '';
+    }
+}
+
+function mergeImportedCustomAPIs(importedApis) {
+    if (!Array.isArray(importedApis) || importedApis.length === 0) {
+        return { added: 0, updated: 0, selected: 0 };
+    }
+
+    const existingMap = new Map();
+    customAPIs.forEach((api, index) => {
+        existingMap.set(`${api.url || ''}|${api.detail || ''}`, index);
+    });
+
+    const selectedSet = new Set(selectedAPIs);
+    let added = 0;
+    let updated = 0;
+
+    importedApis.forEach(importedApi => {
+        if (!importedApi?.url) {
+            return;
+        }
+
+        const normalizedApi = {
+            name: importedApi.name || '未命名源',
+            url: importedApi.url.replace(/\/+$/, ''),
+            detail: importedApi.detail || '',
+            isAdult: Boolean(importedApi.isAdult),
+            category: importedApi.category || '',
+            origin: importedApi.origin || '',
+            sourceType: importedApi.sourceType || ''
+        };
+
+        const key = `${normalizedApi.url}|${normalizedApi.detail}`;
+        if (existingMap.has(key)) {
+            const index = existingMap.get(key);
+            customAPIs[index] = { ...customAPIs[index], ...normalizedApi };
+            selectedSet.add(`custom_${index}`);
+            updated++;
+            return;
+        }
+
+        customAPIs.push(normalizedApi);
+        const newIndex = customAPIs.length - 1;
+        existingMap.set(key, newIndex);
+        selectedSet.add(`custom_${newIndex}`);
+        added++;
+    });
+
+    selectedAPIs = Array.from(selectedSet);
+    localStorage.setItem('customAPIs', JSON.stringify(customAPIs));
+    localStorage.setItem('selectedAPIs', JSON.stringify(selectedAPIs));
+
+    return { added, updated, selected: importedApis.length };
+}
+
+function showUrlImportModal(options) {
+    const {
+        modalId,
+        title,
+        placeholder,
+        buttonText,
+        description = '',
+        onSubmit
+    } = options;
+
+    let modal = document.getElementById(modalId);
     if (modal) {
         document.body.removeChild(modal);
     }
 
     modal = document.createElement('div');
-    modal.id = 'importUrlModal';
+    modal.id = modalId;
     modal.className = 'fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-40';
-
     modal.innerHTML = `
         <div class="bg-[#191919] rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto relative">
-            <button id="closeUrlModal" class="absolute top-4 right-4 text-gray-400 hover:text-white text-xl">&times;</button>
-            
-            <h3 class="text-xl font-bold mb-4">从URL导入配置</h3>
-            
+            <button id="${modalId}_close" class="absolute top-4 right-4 text-gray-400 hover:text-white text-xl">&times;</button>
+            <h3 class="text-xl font-bold mb-4">${title}</h3>
+            ${description ? `<p class="text-sm text-gray-400 mb-4">${description}</p>` : ''}
             <div class="mb-4">
-                <input type="text" id="configUrl" placeholder="输入配置文件URL" 
+                <input type="text" id="${modalId}_input" placeholder="${placeholder}" 
                        class="w-full px-3 py-2 bg-[#222] border border-[#333] rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-blue-500">
             </div>
-            
             <div class="flex justify-end space-x-2">
-                <button id="confirmUrlImport" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">导入</button>
-                <button id="cancelUrlImport" class="bg-[#444] hover:bg-[#555] text-white px-4 py-2 rounded">取消</button>
+                <button id="${modalId}_confirm" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">${buttonText}</button>
+                <button id="${modalId}_cancel" class="bg-[#444] hover:bg-[#555] text-white px-4 py-2 rounded">取消</button>
             </div>
         </div>`;
 
     document.body.appendChild(modal);
 
-    // 关闭按钮事件
-    document.getElementById('closeUrlModal').addEventListener('click', () => {
-        document.body.removeChild(modal);
-    });
+    function closeModal() {
+        if (document.body.contains(modal)) {
+            document.body.removeChild(modal);
+        }
+    }
 
-    // 取消按钮事件
-    document.getElementById('cancelUrlImport').addEventListener('click', () => {
-        document.body.removeChild(modal);
-    });
-
-    // 确认导入按钮事件
-    document.getElementById('confirmUrlImport').addEventListener('click', async () => {
-        const url = document.getElementById('configUrl').value.trim();
+    document.getElementById(`${modalId}_close`).addEventListener('click', closeModal);
+    document.getElementById(`${modalId}_cancel`).addEventListener('click', closeModal);
+    document.getElementById(`${modalId}_confirm`).addEventListener('click', async () => {
+        const input = document.getElementById(`${modalId}_input`);
+        const url = input.value.trim();
         if (!url) {
             showToast('请输入配置文件URL', 'warning');
             return;
         }
 
-        // 验证URL格式
         try {
             const urlObj = new URL(url);
             if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
                 showToast('URL必须以http://或https://开头', 'warning');
                 return;
             }
-        } catch (e) {
+        } catch (error) {
             showToast('URL格式不正确', 'warning');
             return;
         }
 
-        showLoading('正在从URL导入配置...');
+        try {
+            await onSubmit(url, closeModal);
+        } catch (error) {
+            const message = typeof error === 'string' ? error : (error?.message || '导入失败');
+            showToast(message, 'error');
+        }
+    });
 
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+}
+
+// 从URL导入配置
+async function importConfigFromUrl() {
+    showUrlImportModal({
+        modalId: 'importUrlModal',
+        title: '从URL导入配置',
+        placeholder: '输入 LibreTV 配置文件 URL',
+        buttonText: '导入',
+        onSubmit: async (url, closeModal) => {
+        showLoading('正在从URL导入配置...');
         try {
             // 获取配置文件 - 直接请求URL
             const response = await fetch(url, {
@@ -1233,6 +1348,7 @@ async function importConfigFromUrl() {
             }
 
             showToast('配置文件导入成功，3 秒后自动刷新本页面。', 'success');
+            closeModal();
             setTimeout(() => {
                 window.location.reload();
             }, 3000);
@@ -1241,14 +1357,49 @@ async function importConfigFromUrl() {
             showToast(`从URL导入配置出错 (${message})`, 'error');
         } finally {
             hideLoading();
-            document.body.removeChild(modal);
+        }
         }
     });
+}
 
-    // 点击模态框外部关闭
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            document.body.removeChild(modal);
+async function importTvboxFromUrl() {
+    showUrlImportModal({
+        modalId: 'importTvboxUrlModal',
+        title: '从TVBox导入源',
+        placeholder: '输入 TVBox/OK影视 JSON URL',
+        buttonText: '转换并导入',
+        description: '仅导入标准 CMS/V10 接口，drpy、jar、APP、直播源不会直接导入。',
+        onSubmit: async (url, closeModal) => {
+            showLoading('正在抓取并转换 TVBox 源...');
+
+            try {
+                const response = await fetch(`/tools/tvbox-import?url=${encodeURIComponent(url)}`);
+                if (!response.ok) {
+                    throw new Error(`转换请求失败: ${response.status}`);
+                }
+
+                const result = await response.json();
+                if (!result.success) {
+                    throw new Error(result.error || 'TVBox 转换失败');
+                }
+
+                const mergeResult = mergeImportedCustomAPIs(result.customAPIs || []);
+                renderCustomAPIsList();
+                updateSelectedApiCount();
+                checkAdultAPIsSelected();
+                closeModal();
+
+                const summary = result.summary || {};
+                showToast(
+                    `TVBox 导入完成，新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个，支持 ${summary.supportedCount || 0} 个源`,
+                    'success'
+                );
+            } catch (error) {
+                const message = typeof error === 'string' ? error : (error?.message || 'TVBox 导入失败');
+                showToast(`TVBox 导入失败 (${message})`, 'error');
+            } finally {
+                hideLoading();
+            }
         }
     });
 }

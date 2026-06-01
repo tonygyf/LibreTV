@@ -254,8 +254,8 @@ export async function onRequest(context) {
             'Accept': '*/*',
             // 尝试传递一些原始请求的头信息
             'Accept-Language': request.headers.get('Accept-Language') || 'zh-CN,zh;q=0.9,en;q=0.8',
-            // 尝试设置 Referer 为目标网站的域名，或者传递原始 Referer
-            'Referer': request.headers.get('Referer') || new URL(targetUrl).origin
+            // 对上游统一使用目标站点自身 Referer，避免把本站域名透传给图床/防盗链站点
+            'Referer': new URL(targetUrl).origin
         });
 
         try {
