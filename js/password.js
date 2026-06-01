@@ -57,6 +57,7 @@ async function verifyPassword(password) {
                 timestamp: Date.now(),
                 passwordHash: correctHash
             }));
+            localStorage.setItem('proxyAuthHash', correctHash);
         }
         return isValid;
     } catch (error) {

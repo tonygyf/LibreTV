@@ -6,6 +6,39 @@
 // 从全局配置获取密码哈希（如果存在）
 let cachedPasswordHash = null;
 
+function getStoredPasswordHashSync() {
+    if (cachedPasswordHash) {
+        return cachedPasswordHash;
+    }
+
+    const storedHash = localStorage.getItem('proxyAuthHash');
+    if (storedHash) {
+        cachedPasswordHash = storedHash;
+        return storedHash;
+    }
+
+    const passwordVerified = localStorage.getItem('passwordVerified');
+    if (passwordVerified) {
+        try {
+            const parsed = JSON.parse(passwordVerified);
+            if (parsed?.verified && parsed?.passwordHash) {
+                cachedPasswordHash = parsed.passwordHash;
+                localStorage.setItem('proxyAuthHash', parsed.passwordHash);
+                return parsed.passwordHash;
+            }
+        } catch (error) {
+            console.warn('读取本地密码验证状态失败:', error);
+        }
+    }
+
+    if (window.__ENV__ && window.__ENV__.PASSWORD) {
+        cachedPasswordHash = window.__ENV__.PASSWORD;
+        return window.__ENV__.PASSWORD;
+    }
+
+    return null;
+}
+
 /**
  * 获取当前会话的密码哈希
  */
@@ -78,6 +111,21 @@ async function addAuthToProxyUrl(url) {
     }
 }
 
+function buildProxyUrlSync(targetUrl) {
+    if (!targetUrl) {
+        return targetUrl;
+    }
+
+    const baseProxyUrl = `${window.location.origin}${PROXY_URL}${encodeURIComponent(targetUrl)}`;
+    const hash = getStoredPasswordHashSync();
+    if (!hash) {
+        return baseProxyUrl;
+    }
+
+    const separator = baseProxyUrl.includes('?') ? '&' : '?';
+    return `${baseProxyUrl}${separator}auth=${encodeURIComponent(hash)}&t=${Date.now()}`;
+}
+
 /**
  * 验证代理请求的鉴权
  */
@@ -121,6 +169,7 @@ window.addEventListener('storage', (e) => {
 // 导出函数
 window.ProxyAuth = {
     addAuthToProxyUrl,
+    buildProxyUrlSync,
     validateProxyAuth,
     clearAuthCache,
     getPasswordHash

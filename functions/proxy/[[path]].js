@@ -116,18 +116,6 @@ export async function onRequest(context) {
         return true;
     }
 
-    // 验证鉴权（主函数调用）
-    if (!validateAuth(request, env)) {
-        return new Response('Unauthorized', { 
-            status: 401,
-            headers: {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
-                'Access-Control-Allow-Headers': '*'
-            }
-        });
-    }
-
     // 输出调试日志 (需要设置 DEBUG: true 环境变量)
     function logDebug(message) {
         if (DEBUG_ENABLED) {
@@ -190,6 +178,19 @@ export async function onRequest(context) {
             "Content-Type": "application/vnd.apple.mpegurl", // M3U8 的标准 MIME 类型
             "Cache-Control": `public, max-age=${CACHE_TTL}` // 允许浏览器和CDN缓存
         });
+    }
+
+    function isTextLikeContentType(contentType = '') {
+        const normalizedType = contentType.toLowerCase();
+        return normalizedType.startsWith('text/')
+            || normalizedType.includes('json')
+            || normalizedType.includes('javascript')
+            || normalizedType.includes('xml')
+            || normalizedType.includes('urlencoded')
+            || normalizedType.includes('svg')
+            || normalizedType.includes('application/vnd.apple.mpegurl')
+            || normalizedType.includes('application/x-mpegurl')
+            || normalizedType.includes('audio/mpegurl');
     }
 
     // 获取随机 User-Agent
@@ -269,11 +270,17 @@ export async function onRequest(context) {
                  throw new Error(`HTTP error ${response.status}: ${response.statusText}. URL: ${targetUrl}. Body: ${errorBody.substring(0, 150)}`);
             }
 
-            // 读取响应内容为文本
-            const content = await response.text();
             const contentType = response.headers.get('Content-Type') || '';
-            logDebug(`请求成功: ${targetUrl}, Content-Type: ${contentType}, 内容长度: ${content.length}`);
-            return { content, contentType, responseHeaders: response.headers }; // 同时返回原始响应头
+            const isTextResponse = isTextLikeContentType(contentType);
+            const body = isTextResponse ? await response.text() : await response.arrayBuffer();
+            const bodyLength = typeof body === 'string' ? body.length : body.byteLength;
+            logDebug(`请求成功: ${targetUrl}, Content-Type: ${contentType}, 内容长度: ${bodyLength}`);
+            return {
+                body,
+                contentType,
+                responseHeaders: response.headers,
+                isTextResponse
+            };
 
         } catch (error) {
              logDebug(`请求彻底失败: ${targetUrl}: ${error.message}`);
@@ -539,14 +546,17 @@ export async function onRequest(context) {
         }
 
         // --- 实际请求 ---
-        const { content, contentType, responseHeaders } = await fetchContentWithType(targetUrl);
+        const { body, contentType, responseHeaders, isTextResponse } = await fetchContentWithType(targetUrl);
 
         // --- 写入缓存 (KV) ---
-        if (kvNamespace) {
+        if (kvNamespace && isTextResponse) {
              try {
                  const headersToCache = {};
                  responseHeaders.forEach((value, key) => { headersToCache[key.toLowerCase()] = value; });
-                 const cacheValue = { body: content, headers: JSON.stringify(headersToCache) };
+                 const cacheValue = {
+                    body,
+                    headers: JSON.stringify(headersToCache)
+                 };
                  // 注意 KV 写入限制
                  waitUntil(kvNamespace.put(cacheKey, JSON.stringify(cacheValue), { expirationTtl: CACHE_TTL }));
                  logDebug(`已将原始内容写入缓存: ${targetUrl}`);
@@ -557,9 +567,9 @@ export async function onRequest(context) {
         }
 
         // --- 处理响应 ---
-        if (isM3u8Content(content, contentType)) {
+        if (isTextResponse && isM3u8Content(body, contentType)) {
             logDebug(`内容是 M3U8，开始处理: ${targetUrl}`);
-            const processedM3u8 = await processM3u8Content(targetUrl, content, 0, env);
+            const processedM3u8 = await processM3u8Content(targetUrl, body, 0, env);
             return createM3u8Response(processedM3u8);
         } else {
             logDebug(`内容不是 M3U8 (类型: ${contentType})，直接返回: ${targetUrl}`);
@@ -569,7 +579,7 @@ export async function onRequest(context) {
             finalHeaders.set("Access-Control-Allow-Origin", "*");
             finalHeaders.set("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS");
             finalHeaders.set("Access-Control-Allow-Headers", "*");
-            return createResponse(content, 200, finalHeaders);
+            return createResponse(body, 200, finalHeaders);
         }
 
     } catch (error) {
